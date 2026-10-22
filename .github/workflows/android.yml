@@ -30,7 +30,12 @@ jobs:
           distribution: temurin
           java-version: 17
 
-      - uses: android-actions/setup-android@v3
+      # android-actions/setup-android@v3 is NOT used: it runs `sdkmanager tools`, which no longer exists
+      # and fails. ubuntu-latest already ships the Android SDK, we only need the licences + platform 35.
+      - name: Prepare Android SDK
+        run: |
+          yes | sdkmanager --licenses > /dev/null || true
+          sdkmanager "platforms;android-35" "build-tools;35.0.0"
 
       # The project has no gradle wrapper, so install Gradle directly (AGP 8.7.3 needs Gradle 8.9+).
       - uses: gradle/actions/setup-gradle@v4
