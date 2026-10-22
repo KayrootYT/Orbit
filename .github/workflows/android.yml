@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: write   # only needed to attach the APK to a GitHub Release on tags
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -22,10 +22,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Works whether the Gradle project is at the repo root or inside a sub-folder (e.g. BudsyNative/).
       - name: Locate Gradle project
         run: |
           find_settings() { find . -maxdepth 3 \( -name settings.gradle.kts -o -name settings.gradle \) -not -path './.git/*' | head -n 1; }
           SETTINGS=$(find_settings)
+          # Fallback: project was uploaded to the repo as a .zip instead of extracted files.
           if [ -z "$SETTINGS" ]; then
             ZIP=$(find . -maxdepth 2 -name '*.zip' -not -path './.git/*' | head -n 1)
             if [ -n "$ZIP" ]; then
@@ -46,11 +48,16 @@ jobs:
           distribution: temurin
           java-version: 17
 
+      # sdkmanager is installed on ubuntu-latest but is NOT on PATH, so locate it.
       - name: Prepare Android SDK
         run: |
-          yes | sdkmanager --licenses > /dev/null || true
-          sdkmanager "platforms;android-35" "build-tools;35.0.0"
+          SDK="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
+          SDKMANAGER=$(find "$SDK/cmdline-tools" -name sdkmanager -type f | head -n 1)
+          echo "SDK=$SDK  sdkmanager=$SDKMANAGER"
+          yes | "$SDKMANAGER" --sdk_root="$SDK" --licenses > /dev/null || true
+          "$SDKMANAGER" --sdk_root="$SDK" "platforms;android-35" "build-tools;35.0.0"
 
+      # No gradle wrapper in the project, so install Gradle directly (AGP 8.7.3 needs Gradle 8.9+).
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.9'
@@ -72,3 +79,4 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: ${{ env.PROJECT_DIR }}/app/build/outputs/apk/debug/*.apk
+          
