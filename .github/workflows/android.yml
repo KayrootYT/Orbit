@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write   # only needed to attach the APK to a GitHub Release on tags
+  contents: write
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -22,10 +22,18 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # Works whether the Gradle project is at the repo root or inside a sub-folder (e.g. BudsyNative/).
       - name: Locate Gradle project
         run: |
-          SETTINGS=$(find . -maxdepth 3 \( -name settings.gradle.kts -o -name settings.gradle \) -not -path './.git/*' | head -n 1)
+          find_settings() { find . -maxdepth 3 \( -name settings.gradle.kts -o -name settings.gradle \) -not -path './.git/*' | head -n 1; }
+          SETTINGS=$(find_settings)
+          if [ -z "$SETTINGS" ]; then
+            ZIP=$(find . -maxdepth 2 -name '*.zip' -not -path './.git/*' | head -n 1)
+            if [ -n "$ZIP" ]; then
+              echo "Found $ZIP - extracting it for the build"
+              mkdir -p _unzipped && unzip -q "$ZIP" -d _unzipped
+              SETTINGS=$(find _unzipped -maxdepth 3 \( -name settings.gradle.kts -o -name settings.gradle \) | head -n 1)
+            fi
+          fi
           if [ -z "$SETTINGS" ]; then
             echo "No settings.gradle(.kts) found. Repo layout:"; ls -R | head -50; exit 1
           fi
@@ -38,13 +46,11 @@ jobs:
           distribution: temurin
           java-version: 17
 
-      # ubuntu-latest already ships the Android SDK; only accept licences + install platform 35.
       - name: Prepare Android SDK
         run: |
           yes | sdkmanager --licenses > /dev/null || true
           sdkmanager "platforms;android-35" "build-tools;35.0.0"
 
-      # No gradle wrapper in the project, so install Gradle directly (AGP 8.7.3 needs Gradle 8.9+).
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.9'
