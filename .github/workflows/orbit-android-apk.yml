@@ -28,6 +28,12 @@ jobs:
           test -s Orbit.zip || { echo "::error::Orbit.zip is missing or empty"; exit 1; }
           mkdir -p "$RUNNER_TEMP/orbit-project"
           unzip -q Orbit.zip -d "$RUNNER_TEMP/orbit-project"
+          BLOCKER="$(find "$RUNNER_TEMP/orbit-project" -type f -name OrbitBlocker.kt -print -quit)"
+          if [ -n "$BLOCKER" ]; then
+            # Android Uri.encodedPath is nullable; normalize it before string operations.
+            sed -i 's/request\.url\.encodedPath\.lowercase()\.let {/request.url.encodedPath.orEmpty().lowercase().let {/' "$BLOCKER"
+            grep -Fq 'request.url.encodedPath.orEmpty().lowercase().let {' "$BLOCKER" || { echo "::error::Could not apply OrbitBlocker nullable-path fix"; exit 1; }
+          fi
           echo "Extracted project files:"
           find "$RUNNER_TEMP/orbit-project" -maxdepth 4 -type f | head -200
 
