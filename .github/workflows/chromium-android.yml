@@ -1,126 +1,96 @@
 name: Orbit Chromium Android Build
 
 on:
-workflow_dispatch:
-push:
-branches:
-- main
-paths:
-- "chromium-build/**"
-- ".github/workflows/chromium-android.yml"
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - "chromium-build/**"
+      - ".github/workflows/chromium-android.yml"
 
 permissions:
-contents: read
+  contents: read
 
 concurrency:
-group: orbit-chromium-build
-cancel-in-progress: false
+  group: orbit-chromium-android-arm64
+  cancel-in-progress: false
 
 jobs:
-build:
-name: Build Chromium for Android ARM64
-runs-on: [self-hosted, linux, x64, chromium-builder]
-timeout-minutes: 360
+  build-chromium:
+    name: Build Chromium ARM64 APK
+    runs-on: [self-hosted, linux, x64, chromium-builder]
+    timeout-minutes: 360
 
-steps:
-  - name: Checkout repository
-    uses: actions/checkout@v4
+    env:
+      ORBIT_CHROMIUM_ROOT: ${{ runner.home }}/orbit-chromium/src
+      DEPOT_TOOLS_UPDATE: "0"
 
-  - name: Verify build requirements
-    shell: bash
-    run: |
-      set -euo pipefail
+    steps:
+      - name: Checkout Orbit repository
+        uses: actions/checkout@v4
 
-      echo "Operating system:"
-      uname -a
+      - name: Check runner requirements
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "OS:"; uname -a
+          echo "Memory:"; free -h
+          echo "Disk:"; df -h "$HOME"
 
-      echo "Available memory:"
-      free -h
+          FREE_GB=$(df -BG "$HOME" | awk 'NR==2 {gsub(/G/, "", $4); print $4}')
+          if [ "${FREE_GB:-0}" -lt 100 ]; then
+            echo "::error::At least 100 GB free disk space is recommended for Chromium."
+            exit 1
+          fi
 
-      echo "Available disk:"
-      df -h "$HOME"
+          command -v git
+          command -v python3
 
-      FREE_GB=$(df -BG "$HOME" | awk 'NR==2 {gsub(/G/, "", $4); print $4}')
-      if [ "${FREE_GB:-0}" -lt 100 ]; then
-        echo "::error::At least 100 GB of free disk space is recommended."
-        exit 1
-      fi
+      - name: Build Chromium for Android ARM64
+        shell: bash
+        run: |
+          set -euo pipefail
+          chmod +x chromium-build/build_chromium_android.sh
+          ./chromium-build/build_chromium_android.sh
 
-      command -v git
-      command -v python3
+      - name: Verify and stage APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK="$ORBIT_CHROMIUM_ROOT/out/Orbit/apks/ChromePublic.apk"
+          DEST="$GITHUB_WORKSPACE/orbit-artifacts"
 
-  - name: Verify Chromium build script
-    shell: bash
-    run: |
-      set -euo pipefail
+          if [ ! -s "$APK" ]; then
+            echo "::error::Chromium APK not found or empty: $APK"
+            find "$ORBIT_CHROMIUM_ROOT/out/Orbit" -type f -name '*.apk' -print || true
+            exit 1
+          fi
 
-      test -f chromium-build/build_chromium_android.sh || {
-        echo "::error::chromium-build/build_chromium_android.sh is missing."
-        exit 1
-      }
+          mkdir -p "$DEST"
+          cp "$APK" "$DEST/Chromium-Android-ARM64.apk"
+          sha256sum "$DEST/Chromium-Android-ARM64.apk"
+          ls -lh "$DEST/Chromium-Android-ARM64.apk"
 
-      chmod +x chromium-build/build_chromium_android.sh
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Chromium-Android-ARM64
+          path: orbit-artifacts/Chromium-Android-ARM64.apk
+          if-no-files-found: error
+          retention-days: 14
 
-  - name: Build Chromium
-    shell: bash
-    run: |
-      set -euo pipefail
-
-      export ORBIT_CHROMIUM_ROOT="$HOME/orbit-chromium/src"
-
-      ./chromium-build/build_chromium_android.sh
-
-  - name: Verify generated Chromium APK
-    id: verify
-    shell: bash
-    run: |
-      set -euo pipefail
-
-      BUILD_DIR="$HOME/orbit-chromium/src/out/Orbit"
-      ARTIFACT_DIR="$GITHUB_WORKSPACE/orbit-artifacts"
-
-      mkdir -p "$ARTIFACT_DIR"
-
-      APK="$BUILD_DIR/apks/ChromePublic.apk"
-
-      if [ ! -f "$APK" ]; then
-        echo "Expected APK not found at: $APK"
-        echo "Searching build output for APK files..."
-        find "$BUILD_DIR" -type f -name '*.apk' -print || true
-
-        echo "::error::Expected ChromePublic.apk was not generated."
-        exit 1
-      fi
-
-      if [ ! -s "$APK" ]; then
-        echo "::error::Generated APK is empty."
-        exit 1
-      fi
-
-      cp "$APK" "$ARTIFACT_DIR/Orbit-Chromium-ARM64.apk"
-
-      echo "Verified APK:"
-      ls -lh "$ARTIFACT_DIR/Orbit-Chromium-ARM64.apk"
-
-  - name: Upload APK
-    uses: actions/upload-artifact@v4
-    with:
-      name: Orbit-Chromium-Android-ARM64
-      path: orbit-artifacts/Orbit-Chromium-ARM64.apk
-      if-no-files-found: error
-      retention-days: 14
-
-  - name: Build result
-    if: always()
-    shell: bash
-    run: |
-      {
-        echo "## Orbit Chromium Build"
-        echo ""
-        echo "- Runner: self-hosted Linux x64"
-        echo "- Target architecture: Android ARM64"
-        echo "- Workflow status: ${{ job.status }}"
-        echo ""
-        echo "This workflow builds upstream Chromium."
-        echo "It does not by itself integrate the Orbit app UI."
-      } >> "$GITHUB_STEP_SUMMARY"
+      - name: Write build summary
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "## Orbit Chromium Android ARM64"
+            echo
+            echo "- Build job status: ${{ job.status }}"
+            echo "- Build target: chrome_public_apk"
+            echo "- Architecture: arm64"
+            echo
+            echo "Note: upstream Chromium's APK is named Chromium-Android-ARM64.apk as an artifact."
+            echo "Renaming the artifact does not rebrand Chromium or integrate Orbit's UI/privacy features."
+          } >> "$GITHUB_STEP_SUMMARY"
