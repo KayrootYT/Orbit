@@ -22,10 +22,6 @@ jobs:
     runs-on: [self-hosted, linux, x64, chromium-builder]
     timeout-minutes: 360
 
-    env:
-      ORBIT_CHROMIUM_ROOT: ${{ runner.home }}/orbit-chromium/src
-      DEPOT_TOOLS_UPDATE: "0"
-
     steps:
       - name: Checkout Orbit repository
         uses: actions/checkout@v4
@@ -52,18 +48,21 @@ jobs:
         run: |
           set -euo pipefail
           chmod +x chromium-build/build_chromium_android.sh
+          export ORBIT_CHROMIUM_ROOT="$HOME/orbit-chromium/src"
+          echo "Chromium source directory: $ORBIT_CHROMIUM_ROOT"
           ./chromium-build/build_chromium_android.sh
 
       - name: Verify and stage APK
         shell: bash
         run: |
           set -euo pipefail
-          APK="$ORBIT_CHROMIUM_ROOT/out/Orbit/apks/ChromePublic.apk"
+          CHROMIUM_ROOT="$HOME/orbit-chromium/src"
+          APK="$CHROMIUM_ROOT/out/Orbit/apks/ChromePublic.apk"
           DEST="$GITHUB_WORKSPACE/orbit-artifacts"
 
           if [ ! -s "$APK" ]; then
             echo "::error::Chromium APK not found or empty: $APK"
-            find "$ORBIT_CHROMIUM_ROOT/out/Orbit" -type f -name '*.apk' -print || true
+            find "$CHROMIUM_ROOT/out/Orbit" -type f -name '*.apk' -print || true
             exit 1
           fi
 
