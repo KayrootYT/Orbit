@@ -1,82 +1,98 @@
-name: Android CI
+name: Orbit Chromium Android ARM64
 
 on:
-  push:
-    branches: [main, master]
-    tags: ['v*']
-  pull_request:
-  workflow_dispatch:
+workflow_dispatch:
+push:
+paths:
+- "chromium-build/**"
+- ".github/workflows/chromium-android.yml"
 
 permissions:
-  contents: write   # only needed to attach the APK to a GitHub Release on tags
+contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+group: orbit-chromium-android
+cancel-in-progress: false
 
 jobs:
-  build:
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
+build-chromium:
+name: Build Orbit Chromium ARM64
+runs-on: [self-hosted, linux, x64, chromium-builder]
+timeout-minutes: 360
 
-    steps:
-      - uses: actions/checkout@v4
+env:
+  ORBIT_CHROMIUM_ROOT: ${{ runner.home }}/orbit-chromium/src
 
-      # Works whether the Gradle project is at the repo root or inside a sub-folder (e.g. BudsyNative/).
-      - name: Locate Gradle project
-        run: |
-          find_settings() { find . -maxdepth 3 \( -name settings.gradle.kts -o -name settings.gradle \) -not -path './.git/*' | head -n 1; }
-          SETTINGS=$(find_settings)
-          # Fallback: project was uploaded to the repo as a .zip instead of extracted files.
-          if [ -z "$SETTINGS" ]; then
-            ZIP=$(find . -maxdepth 2 -name '*.zip' -not -path './.git/*' | head -n 1)
-            if [ -n "$ZIP" ]; then
-              echo "Found $ZIP - extracting it for the build"
-              mkdir -p _unzipped && unzip -q "$ZIP" -d _unzipped
-              SETTINGS=$(find _unzipped -maxdepth 3 \( -name settings.gradle.kts -o -name settings.gradle \) | head -n 1)
-            fi
-          fi
-          if [ -z "$SETTINGS" ]; then
-            echo "No settings.gradle(.kts) found. Repo layout:"; ls -R | head -50; exit 1
-          fi
-          DIR=$(dirname "$SETTINGS")
-          echo "PROJECT_DIR=$DIR" >> "$GITHUB_ENV"
-          echo "Gradle project found in: $DIR"
+steps:
+  - name: Checkout Orbit repository
+    uses: actions/checkout@v4
 
-      - uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: 17
+  - name: Check build environment
+    shell: bash
+    run: |
+      set -euo pipefail
+      echo "=== OS ==="
+      uname -a
+      echo "=== Disk space ==="
+      df -h
+      echo "=== RAM ==="
+      free -h || true
+      echo "=== Available tools ==="
+      git --version
+      python3 --version
+      command -v java || true
 
-      # sdkmanager is installed on ubuntu-latest but is NOT on PATH, so locate it.
-      - name: Prepare Android SDK
-        run: |
-          SDK="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
-          SDKMANAGER=$(find "$SDK/cmdline-tools" -name sdkmanager -type f | head -n 1)
-          echo "SDK=$SDK  sdkmanager=$SDKMANAGER"
-          yes | "$SDKMANAGER" --sdk_root="$SDK" --licenses > /dev/null || true
-          "$SDKMANAGER" --sdk_root="$SDK" "platforms;android-35" "build-tools;35.0.0"
+      FREE_GB=$(df -BG "$HOME" | awk 'NR==2 {gsub("G","",$4); print $4}')
+      if [ "${FREE_GB:-0}" -lt 100 ]; then
+        echo "::error::Chromium build requires approximately 100 GB or more free disk space."
+        exit 1
+      fi
 
-      # No gradle wrapper in the project, so install Gradle directly (AGP 8.7.3 needs Gradle 8.9+).
-      - uses: gradle/actions/setup-gradle@v4
-        with:
-          gradle-version: '8.9'
+  - name: Build Chromium for Android ARM64
+    shell: bash
+    run: |
+      set -euo pipefail
+      chmod +x chromium-build/build_chromium_android.sh
+      ./chromium-build/build_chromium_android.sh
 
-      - name: Build debug APK
-        run: |
-          cd "$PROJECT_DIR"
-          gradle assembleDebug --stacktrace
+  - name: Locate generated APKs
+    id: apk
+    shell: bash
+    run: |
+      set -euo pipefail
 
-      - name: Upload APK
-        uses: actions/upload-artifact@v4
-        with:
-          name: Orbit-debug-apk
-          path: ${{ env.PROJECT_DIR }}/app/build/outputs/apk/debug/*.apk
-          if-no-files-found: error
+      BUILD_DIR="$ORBIT_CHROMIUM_ROOT/out/Orbit"
+      mkdir -p "$GITHUB_WORKSPACE/orbit-artifacts"
 
-      - name: Publish GitHub Release (tags only)
-        if: startsWith(github.ref, 'refs/tags/v')
-        uses: softprops/action-gh-release@v2
-        with:
-          files: ${{ env.PROJECT_DIR }}/app/build/outputs/apk/debug/*.apk
-          
+      find "$BUILD_DIR" -type f -name '*.apk' -print
+
+      find "$BUILD_DIR" -type f -name '*.apk' \
+        -exec cp -v {} "$GITHUB_WORKSPACE/orbit-artifacts/" \;
+
+      if ! find "$GITHUB_WORKSPACE/orbit-artifacts" \
+        -maxdepth 1 -type f -name '*.apk' | grep -q .; then
+        echo "::error::No APK was generated. Check the Chromium build logs."
+        exit 1
+      fi
+
+      echo "APK files found:"
+      ls -lh "$GITHUB_WORKSPACE/orbit-artifacts"
+
+  - name: Upload Chromium APK artifacts
+    uses: actions/upload-artifact@v4
+    with:
+      name: orbit-chromium-android-arm64
+      path: orbit-artifacts/*.apk
+      if-no-files-found: error
+      retention-days: 14
+
+  - name: Upload build summary
+    if: always()
+    uses: actions/upload-artifact@v4
+    with:
+      name: orbit-chromium-build-summary
+      path: |
+        ${{ env.ORBIT_CHROMIUM_ROOT }}/out/Orbit/args.gn
+        ${{ env.ORBIT_CHROMIUM_ROOT }}/out/Orbit/build.ninja
+      if-no-files-found: ignore
+      retention-days: 7
