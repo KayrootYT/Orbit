@@ -48,11 +48,14 @@ jobs:
 
           SETTINGS="$(find "$ROOT" -type f \( -name settings.gradle -o -name settings.gradle.kts \) -print -quit)"
           if [ -n "$SETTINGS" ]; then
-            echo "::error::Gradle project found, but gradlew is missing. Add the Gradle wrapper to Orbit.zip so builds use the project's intended Gradle version."
+            PROJECT_DIR="$(dirname "$SETTINGS")"
+            echo "project_dir=$PROJECT_DIR" >> "$GITHUB_OUTPUT"
+            echo "build_mode=generate-wrapper" >> "$GITHUB_OUTPUT"
+            echo "::warning::gradlew was missing; the workflow will generate a temporary Gradle wrapper."
           else
             echo "::error::No Gradle Android project was found inside Orbit.zip."
+            exit 1
           fi
-          exit 1
 
       - name: Set up Java
         uses: actions/setup-java@v4
@@ -62,6 +65,16 @@ jobs:
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.7"
+
+      - name: Generate missing Gradle wrapper
+        if: steps.project.outputs.build_mode == 'generate-wrapper'
+        working-directory: ${{ steps.project.outputs.project_dir }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gradle --no-daemon wrapper --gradle-version 8.7
 
       - name: Build debug APK
         working-directory: ${{ steps.project.outputs.project_dir }}
