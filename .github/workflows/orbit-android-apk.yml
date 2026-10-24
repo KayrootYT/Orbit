@@ -1,0 +1,93 @@
+name: Orbit Android APK Build
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - "Orbit.zip"
+      - ".github/workflows/orbit-android-apk.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  build-apk:
+    name: Build Orbit Android APK
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Check archive and extract project
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s Orbit.zip || { echo "::error::Orbit.zip is missing or empty"; exit 1; }
+          mkdir -p "$RUNNER_TEMP/orbit-project"
+          unzip -q Orbit.zip -d "$RUNNER_TEMP/orbit-project"
+          echo "Extracted project files:"
+          find "$RUNNER_TEMP/orbit-project" -maxdepth 4 -type f | head -200
+
+      - name: Locate Gradle project
+        id: project
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT="$RUNNER_TEMP/orbit-project"
+          WRAPPER="$(find "$ROOT" -type f -name gradlew -print -quit)"
+          if [ -n "$WRAPPER" ]; then
+            PROJECT_DIR="$(dirname "$WRAPPER")"
+            chmod +x "$WRAPPER"
+            echo "project_dir=$PROJECT_DIR" >> "$GITHUB_OUTPUT"
+            echo "build_mode=wrapper" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          SETTINGS="$(find "$ROOT" -type f \( -name settings.gradle -o -name settings.gradle.kts \) -print -quit)"
+          if [ -n "$SETTINGS" ]; then
+            echo "::error::Gradle project found, but gradlew is missing. Add the Gradle wrapper to Orbit.zip so builds use the project's intended Gradle version."
+          else
+            echo "::error::No Gradle Android project was found inside Orbit.zip."
+          fi
+          exit 1
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Build debug APK
+        working-directory: ${{ steps.project.outputs.project_dir }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./gradlew --no-daemon assembleDebug
+
+      - name: Collect APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT="$RUNNER_TEMP/orbit-project"
+          mkdir -p "$GITHUB_WORKSPACE/orbit-artifacts"
+          find "$ROOT" -type f -path '*/build/outputs/apk/*/*.apk' -print
+          find "$ROOT" -type f -path '*/build/outputs/apk/*/*.apk' -exec cp {} "$GITHUB_WORKSPACE/orbit-artifacts/" \;
+          if ! find "$GITHUB_WORKSPACE/orbit-artifacts" -type f -name '*.apk' -size +0c | grep -q .; then
+            echo "::error::Build completed but no APK was found."
+            exit 1
+          fi
+          ls -lh "$GITHUB_WORKSPACE/orbit-artifacts"
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: Orbit-debug-apk
+          path: orbit-artifacts/*.apk
+          if-no-files-found: error
+          retention-days: 14
