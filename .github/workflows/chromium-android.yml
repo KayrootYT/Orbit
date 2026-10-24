@@ -12,10 +12,6 @@ on:
 permissions:
   contents: read
 
-concurrency:
-  group: orbit-chromium-android-arm64
-  cancel-in-progress: false
-
 jobs:
   build-chromium:
     name: Build Chromium ARM64 APK
