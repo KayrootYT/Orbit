@@ -19,7 +19,8 @@ concurrency:
 jobs:
   build-chromium:
     name: Build Chromium ARM64 APK
-    runs-on: [self-hosted, linux, x64, chromium-builder]
+    # Use standard self-hosted labels; do not require a custom label that may not exist.
+    runs-on: [self-hosted, linux, x64]
     timeout-minutes: 360
 
     steps:
@@ -90,6 +91,5 @@ jobs:
             echo "- Build target: chrome_public_apk"
             echo "- Architecture: arm64"
             echo
-            echo "Note: upstream Chromium's APK is named Chromium-Android-ARM64.apk as an artifact."
-            echo "Renaming the artifact does not rebrand Chromium or integrate Orbit's UI/privacy features."
+            echo "This workflow builds upstream Chromium; it does not itself integrate Orbit's UI/privacy features."
           } >> "$GITHUB_STEP_SUMMARY"
