@@ -6,7 +6,7 @@ on:
     branches:
       - main
     paths:
-      - "chromium-build/**"
+      - "chromium-build/build_chromium_android.sh"
       - ".github/workflows/chromium-android.yml"
 
 permissions:
